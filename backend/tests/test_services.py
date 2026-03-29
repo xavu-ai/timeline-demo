@@ -14,6 +14,7 @@ class TestTimelineService:
         service = TimelineService(mock_session)
 
         hash1 = service.hash_password("password123")
+        # hash2 is used to verify that different salts produce different hashes
         hash2 = service.hash_password("password123")
 
         # bcrypt hashes are not deterministic (they include salt),
@@ -22,6 +23,10 @@ class TestTimelineService:
         assert hash1 != "password123"
         # Verify it's a valid bcrypt hash format (starts with $2a$, $2b$, or $2y$)
         assert hash1.startswith(("$2a$", "$2b$", "$2y$"))
+        # Verify hash2 is also valid and different from hash1 (different salt)
+        assert len(hash2) > 0
+        assert hash2.startswith(("$2a$", "$2b$", "$2y$"))
+        assert hash1 != hash2  # Same password, different salt = different hash
 
     def test_to_summary(self):
         """Test converting Timeline to TimelineSummary."""
