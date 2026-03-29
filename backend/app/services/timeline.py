@@ -87,7 +87,6 @@ class TimelineService:
             title=timeline.title,
             description=timeline.description,
             is_public=timeline.is_public,
-            password_hash=timeline.password_hash,
             created_at=timeline.created_at,
             updated_at=timeline.updated_at,
             entries=[

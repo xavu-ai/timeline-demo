@@ -53,7 +53,6 @@ class TimelineDetail(BaseModel):
     title: str
     description: str | None
     is_public: bool
-    password_hash: str | None = None
     created_at: datetime
     updated_at: datetime
     entries: list[EntryResponse] = []
