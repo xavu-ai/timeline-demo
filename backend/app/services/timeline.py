@@ -1,9 +1,9 @@
-import hashlib
 import uuid
 from datetime import datetime
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from passlib.context import CryptContext
 
 from app.models.timeline import Timeline, TimelineEntry
 from app.schemas.timeline import (
@@ -14,6 +14,8 @@ from app.schemas.timeline import (
     EntryCreate,
     EntryResponse,
 )
+
+_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class TimelineService:
@@ -27,35 +29,42 @@ class TimelineService:
         total_result = await self.session.execute(count_query)
         total = total_result.scalar() or 0
 
+        # Subquery to get entry counts per timeline in a single query
+        entry_count_subquery = (
+            select(
+                TimelineEntry.timeline_id,
+                func.count(TimelineEntry.id).label("entry_count")
+            )
+            .group_by(TimelineEntry.timeline_id)
+            .subquery()
+        )
+
         query = (
-            select(Timeline)
+            select(
+                Timeline,
+                func.coalesce(entry_count_subquery.c.entry_count, 0).label("entry_count")
+            )
+            .outerjoin(entry_count_subquery, Timeline.id == entry_count_subquery.c.timeline_id)
             .where(Timeline.is_public)
             .order_by(Timeline.created_at.desc())
             .offset(offset)
             .limit(limit)
         )
         result = await self.session.execute(query)
-        timelines = result.scalars().all()
+        rows = result.all()
 
-        items = []
-        for timeline in timelines:
-            entry_count_query = select(func.count(TimelineEntry.id)).where(
-                TimelineEntry.timeline_id == timeline.id
+        items = [
+            TimelineSummary(
+                id=timeline.id,
+                title=timeline.title,
+                description=timeline.description,
+                is_public=timeline.is_public,
+                created_at=timeline.created_at,
+                updated_at=timeline.updated_at,
+                entry_count=entry_count,
             )
-            count_result = await self.session.execute(entry_count_query)
-            entry_count = count_result.scalar() or 0
-
-            items.append(
-                TimelineSummary(
-                    id=timeline.id,
-                    title=timeline.title,
-                    description=timeline.description,
-                    is_public=timeline.is_public,
-                    created_at=timeline.created_at,
-                    updated_at=timeline.updated_at,
-                    entry_count=entry_count,
-                )
-            )
+            for timeline, entry_count in rows
+        ]
 
         return TimelineList(items=items, total=total, page=page, limit=limit)
 
@@ -94,7 +103,7 @@ class TimelineService:
         )
 
     def hash_password(self, password: str) -> str:
-        return hashlib.sha256(password.encode()).hexdigest()
+        return _pwd_context.hash(password)
 
     async def create(self, data: TimelineCreate) -> Timeline:
         timeline = Timeline(
@@ -132,7 +141,7 @@ class TimelineService:
             return False
         if not timeline.password_hash:
             return False
-        return timeline.password_hash == self.hash_password(password)
+        return _pwd_context.verify(password, timeline.password_hash)
 
     async def generate_access_token(self, timeline_id: str) -> str:
         return f"tl_{timeline_id}_{uuid.uuid4().hex[:16]}"

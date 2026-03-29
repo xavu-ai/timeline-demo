@@ -16,9 +16,12 @@ class TestTimelineService:
         hash1 = service.hash_password("password123")
         hash2 = service.hash_password("password123")
 
-        assert hash1 == hash2
-        assert len(hash1) == 64  # SHA256 produces 64 hex chars
+        # bcrypt hashes are not deterministic (they include salt),
+        # so we verify the hash is not empty and not equal to the password
+        assert len(hash1) > 0
         assert hash1 != "password123"
+        # Verify it's a valid bcrypt hash format (starts with $2a$, $2b$, or $2y$)
+        assert hash1.startswith(("$2a$", "$2b$", "$2y$"))
 
     def test_to_summary(self):
         """Test converting Timeline to TimelineSummary."""
