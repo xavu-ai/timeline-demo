@@ -3,9 +3,7 @@ from datetime import datetime
 from app.schemas.timeline import (
     TimelineCreate,
     TimelineSummary,
-    TimelineDetail,
     EntryCreate,
-    EntryResponse,
     PasswordVerify,
 )
 

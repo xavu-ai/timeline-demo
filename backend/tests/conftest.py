@@ -1,5 +1,4 @@
 """Pytest fixtures for backend tests."""
-import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 

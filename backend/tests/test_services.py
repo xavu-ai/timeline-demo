@@ -3,7 +3,6 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime
 from app.services.timeline import TimelineService
-from app.schemas.timeline import TimelineCreate, EntryCreate
 
 
 class TestTimelineService:
