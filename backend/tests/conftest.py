@@ -1,12 +1,13 @@
 """Pytest fixtures for backend tests."""
-import pytest
-from fastapi.testclient import TestClient
+import pytest_asyncio
+from httpx import AsyncClient, ASGITransport
 
 from app.main import app
 
 
-@pytest.fixture
-def client():
-    """Create a test client for the FastAPI app."""
-    with TestClient(app) as c:
-        yield c
+@pytest_asyncio.fixture
+async def client():
+    """Create an async test client for the FastAPI app."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
