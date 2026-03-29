@@ -1,0 +1,167 @@
+name: Build and Deploy to Azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ACR_NAME: xavuai
+  RESOURCE_GROUP: rg-xavu-ai
+  PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+
+jobs:
+  build-and-push:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    outputs:
+      backend-image: ${{ steps.build.outputs.backend-image }}
+      frontend-image: ${{ steps.build.outputs.frontend-image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build & Push Backend
+        id: build-backend
+        run: |
+          IMAGE="${{ env.ACR_NAME }}.azurecr.io/${{ env.PROJECT_NAME }}/backend:${{ github.sha }}"
+          IMAGE_LATEST="${{ env.ACR_NAME }}.azurecr.io/${{ env.PROJECT_NAME }}/backend:latest"
+          docker build -t "$IMAGE" -t "$IMAGE_LATEST" ./backend
+          docker push "$IMAGE"
+          docker push "$IMAGE_LATEST"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Build & Push Frontend
+        id: build-frontend
+        run: |
+          IMAGE="${{ env.ACR_NAME }}.azurecr.io/${{ env.PROJECT_NAME }}/frontend:${{ github.sha }}"
+          IMAGE_LATEST="${{ env.ACR_NAME }}.azurecr.io/${{ env.PROJECT_NAME }}/frontend:latest"
+          docker build -t "$IMAGE" -t "$IMAGE_LATEST" ./frontend
+          docker push "$IMAGE"
+          docker push "$IMAGE_LATEST"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - id: build
+        run: |
+          echo "backend-image=${{ steps.build-backend.outputs.image }}" >> "$GITHUB_OUTPUT"
+          echo "frontend-image=${{ steps.build-frontend.outputs.image }}" >> "$GITHUB_OUTPUT"
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Backend to Staging
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          containerAppName: ${{ env.PROJECT_NAME }}-backend-staging
+          resourceGroup: ${{ env.RESOURCE_GROUP }}
+          imageToDeploy: ${{ needs.build-and-push.outputs.backend-image }}
+
+      - name: Deploy Frontend to Staging
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          containerAppName: ${{ env.PROJECT_NAME }}-frontend-staging
+          resourceGroup: ${{ env.RESOURCE_GROUP }}
+          imageToDeploy: ${{ needs.build-and-push.outputs.frontend-image }}
+          environmentVariables: >-
+            BACKEND_URL=http://${{ env.PROJECT_NAME }}-backend-staging
+
+      - name: Health Check - Staging
+        run: |
+          BACKEND_FQDN=$(az containerapp show \
+            --name "${{ env.PROJECT_NAME }}-backend-staging" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          FRONTEND_FQDN=$(az containerapp show \
+            --name "${{ env.PROJECT_NAME }}-frontend-staging" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+
+          sleep 30
+
+          for i in $(seq 1 5); do
+            if curl -sf "https://${BACKEND_FQDN}/healthz" > /dev/null 2>&1; then
+              echo "Backend healthy"
+              break
+            fi
+            echo "Waiting for backend... (attempt $i/5)"
+            sleep 10
+          done
+          curl -sf "https://${BACKEND_FQDN}/healthz" || { echo "Backend health check failed"; exit 1; }
+
+          for i in $(seq 1 5); do
+            if curl -sf "https://${FRONTEND_FQDN}" > /dev/null 2>&1; then
+              echo "Frontend healthy"
+              break
+            fi
+            echo "Waiting for frontend... (attempt $i/5)"
+            sleep 10
+          done
+          curl -sf "https://${FRONTEND_FQDN}" || { echo "Frontend health check failed"; exit 1; }
+
+  deploy-production:
+    name: Deploy to Production
+    needs: [build-and-push, deploy-staging]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Backend to Production
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          containerAppName: ${{ env.PROJECT_NAME }}-backend-prod
+          resourceGroup: ${{ env.RESOURCE_GROUP }}
+          imageToDeploy: ${{ needs.build-and-push.outputs.backend-image }}
+
+      - name: Deploy Frontend to Production
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          containerAppName: ${{ env.PROJECT_NAME }}-frontend-prod
+          resourceGroup: ${{ env.RESOURCE_GROUP }}
+          imageToDeploy: ${{ needs.build-and-push.outputs.frontend-image }}
+          environmentVariables: >-
+            BACKEND_URL=http://${{ env.PROJECT_NAME }}-backend-prod
+
+      - name: Health Check - Production
+        run: |
+          BACKEND_FQDN=$(az containerapp show \
+            --name "${{ env.PROJECT_NAME }}-backend-prod" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          FRONTEND_FQDN=$(az containerapp show \
+            --name "${{ env.PROJECT_NAME }}-frontend-prod" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+
+          sleep 30
+          curl -sf "https://${BACKEND_FQDN}/healthz" || { echo "Production backend failed"; exit 1; }
+          curl -sf "https://${FRONTEND_FQDN}" || { echo "Production frontend failed"; exit 1; }
+          echo "Production deployment verified"

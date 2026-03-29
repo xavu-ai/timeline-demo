@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/app
+      PORT: "6100"
+    depends_on:
+      db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6100/healthz"]
+      interval: 10s
+      retries: 5
+
+  frontend:
+    build: ./frontend
+    environment:
+      BACKEND_URL: http://backend:6100
+      PORT: "8100"
+    depends_on:
+      backend: { condition: service_healthy }
+
+  test-runner:
+    image: curlimages/curl:latest
+    depends_on:
+      backend: { condition: service_healthy }
+      frontend: { condition: service_started }
+    entrypoint: sh
+    command: |
+      -c "
+        echo 'Waiting for services...'
+        sleep 10
+        echo 'Testing backend health...'
+        curl -sf http://backend:6100/healthz || exit 1
+        echo 'Testing frontend...'
+        curl -sf http://frontend:8100 || exit 1
+        echo 'All integration tests passed!'
+      "

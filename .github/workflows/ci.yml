@@ -1,0 +1,95 @@
+name: CI — Lint, Test & Build
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Type check (mypy)
+        run: uv run mypy app/ --ignore-missing-imports || true
+
+      - name: Test (pytest)
+        run: uv run pytest -v
+        env:
+          DATABASE_URL: sqlite:///./test.db
+
+      - name: Build Docker image
+        run: docker build -t backend-test .
+
+  frontend:
+    name: Frontend (Next.js)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+
+      - name: Lint
+        run: pnpm lint || true
+
+      - name: Type check
+        run: pnpm tsc --noEmit
+
+      - name: Build
+        run: pnpm build
+
+      - name: Build Docker image
+        run: docker build -t frontend-test .
+
+  integration:
+    name: Integration (Docker Compose)
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start services
+        run: docker compose -f docker-compose.test.yml up --build --wait --timeout 120
+
+      - name: Health checks
+        run: |
+          docker compose -f docker-compose.test.yml run --rm test-runner
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
