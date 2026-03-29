@@ -1,7 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.dependencies import get_db, get_timeline_service, optional_password
+from app.dependencies import get_timeline_service, optional_password
 from app.schemas.timeline import (
     TimelineCreate,
     TimelineList,

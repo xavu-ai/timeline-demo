@@ -23,13 +23,13 @@ class TimelineService:
     async def list_public(self, page: int = 1, limit: int = 20) -> TimelineList:
         offset = (page - 1) * limit
 
-        count_query = select(func.count(Timeline.id)).where(Timeline.is_public == True)
+        count_query = select(func.count(Timeline.id)).where(Timeline.is_public)
         total_result = await self.session.execute(count_query)
         total = total_result.scalar() or 0
 
         query = (
             select(Timeline)
-            .where(Timeline.is_public == True)
+            .where(Timeline.is_public)
             .order_by(Timeline.created_at.desc())
             .offset(offset)
             .limit(limit)
